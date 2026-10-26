@@ -61,18 +61,18 @@ export default {
 
                 return [
                     {
-                        gross: null,
                         currencyId: this.currency.id,
                         linked: true,
+                        gross: null,
                         net: null,
                     },
                 ];
             },
 
             set(newPurchasePrice) {
-                let priceForCurrency = this.price.find((price) => price.currencyId === newPurchasePrice.currencyId);
-                if (priceForCurrency) {
-                    priceForCurrency = newPurchasePrice;
+                const index = this.price.findIndex((price) => price.currencyId === newPurchasePrice.currencyId);
+                if (index !== -1) {
+                    this.price.splice(index, 1, newPurchasePrice);
                 } else {
                     this.price.push(newPurchasePrice);
                 }
