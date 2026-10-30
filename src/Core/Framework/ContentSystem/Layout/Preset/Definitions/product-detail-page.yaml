@@ -7,4 +7,5 @@ layout:
       content:
         - component: Sw:Media:Gallery
         - component: Sw:Product:PriceDisplay
+  - preset: Sw:ProductReviews
   - component: Sw:Product:Slider

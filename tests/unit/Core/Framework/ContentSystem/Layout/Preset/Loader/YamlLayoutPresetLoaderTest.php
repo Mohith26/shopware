@@ -6,12 +6,10 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\TestDox;
 use PHPUnit\Framework\TestCase;
 use Shopware\Core\Framework\ContentSystem\ContentSystemException;
-use Shopware\Core\Framework\ContentSystem\Layout\Preset\LayoutPresetPayloadCompiler;
 use Shopware\Core\Framework\ContentSystem\Layout\Preset\Loader\LayoutPresetNameResolver;
 use Shopware\Core\Framework\ContentSystem\Layout\Preset\Loader\LayoutPresetSourceDirectory;
 use Shopware\Core\Framework\ContentSystem\Layout\Preset\Loader\YamlLayoutPresetLoader;
 use Shopware\Core\Framework\ContentSystem\Layout\Preset\Serialization\LayoutPresetSpecificationSerializer;
-use Shopware\Core\Framework\ContentSystem\Layout\Preset\Specification\ContentSystemLayoutPresetSpecification;
 use Shopware\Core\Framework\Log\Package;
 use Symfony\Component\Filesystem\Filesystem;
 use Symfony\Component\Validator\Validation;
@@ -46,7 +44,7 @@ class YamlLayoutPresetLoaderTest extends TestCase
 
         $loader = $this->loader([new LayoutPresetSourceDirectory('core', $this->tempDir, 'Sw')]);
 
-        $ids = array_map(static fn (ContentSystemLayoutPresetSpecification $preset): string => $preset->id, $loader->load());
+        $ids = array_keys($loader->load());
         sort($ids);
 
         static::assertSame(['Sw:Media', 'Sw:TextBlock'], $ids);
@@ -55,7 +53,7 @@ class YamlLayoutPresetLoaderTest extends TestCase
     #[TestDox('returns an empty array for a directory that does not exist')]
     public function testMissingDirectoryReturnsEmpty(): void
     {
-        static::assertSame([], $this->loader()->loadFromDirectory($this->tempDir . '/nope', 'core', 'Sw'));
+        static::assertSame([], $this->loader()->loadDtosFromDirectory($this->tempDir . '/nope', 'core', 'Sw'));
     }
 
     #[TestDox('loads the validated dtos keyed by derived id without compiling')]
@@ -76,7 +74,24 @@ class YamlLayoutPresetLoaderTest extends TestCase
         $this->writePreset('text-block.yml', ['name' => 'B', 'layout' => []]);
 
         $this->expectExceptionObject(ContentSystemException::layoutPresetDuplicate('Sw:TextBlock'));
-        $this->loader()->loadFromDirectory($this->tempDir, 'core', 'Sw');
+        $this->loader()->loadDtosFromDirectory($this->tempDir, 'core', 'Sw');
+    }
+
+    #[TestDox('throws when two directories provide the same preset id')]
+    public function testDuplicateIdAcrossDirectoriesThrows(): void
+    {
+        mkdir($this->tempDir . '/a');
+        mkdir($this->tempDir . '/b');
+        file_put_contents($this->tempDir . '/a/text-block.yaml', Yaml::dump(['name' => 'A', 'description' => 'A preset.', 'icon' => 'regular-circle', 'layout' => []]));
+        file_put_contents($this->tempDir . '/b/text-block.yaml', Yaml::dump(['name' => 'B', 'description' => 'A preset.', 'icon' => 'regular-circle', 'layout' => []]));
+
+        $loader = $this->loader([
+            new LayoutPresetSourceDirectory('core', $this->tempDir . '/a', 'Sw'),
+            new LayoutPresetSourceDirectory('core', $this->tempDir . '/b', 'Sw'),
+        ]);
+
+        $this->expectExceptionObject(ContentSystemException::layoutPresetDuplicate('Sw:TextBlock'));
+        $loader->load();
     }
 
     #[TestDox('rejects a filename that is not kebab-case')]
@@ -114,7 +129,7 @@ class YamlLayoutPresetLoaderTest extends TestCase
     private function assertLoadFailsWith(string $errorCode): void
     {
         try {
-            $this->loader()->loadFromDirectory($this->tempDir, 'core', 'Sw');
+            $this->loader()->loadDtosFromDirectory($this->tempDir, 'core', 'Sw');
             static::fail('Expected a ContentSystemException.');
         } catch (ContentSystemException $e) {
             static::assertSame($errorCode, $e->getErrorCode());
@@ -128,7 +143,6 @@ class YamlLayoutPresetLoaderTest extends TestCase
     {
         return new YamlLayoutPresetLoader(
             new LayoutPresetSpecificationSerializer(),
-            static::createStub(LayoutPresetPayloadCompiler::class),
             $this->validator(),
             new LayoutPresetNameResolver(),
             $directories,
