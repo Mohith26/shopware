@@ -7,10 +7,18 @@ use Shopware\Core\Content\Cms\DataResolver\Element\ElementDataCollection;
 use Shopware\Core\Content\Cms\DataResolver\ResolverContext\EntityResolverContext;
 use Shopware\Core\Content\Cms\DataResolver\ResolverContext\ResolverContext;
 use Shopware\Core\Content\Cms\SalesChannel\Struct\ProductDescriptionReviewsStruct;
+use Shopware\Core\Content\Media\MediaCollection;
+use Shopware\Core\Content\Product\Aggregate\ProductDocument\ProductDocumentCollection;
+use Shopware\Core\Content\Product\Aggregate\ProductDocument\ProductDocumentEntity;
 use Shopware\Core\Content\Product\SalesChannel\Review\AbstractProductReviewLoader;
 use Shopware\Core\Content\Product\SalesChannel\Review\ProductReviewsWidgetLoadedHook;
 use Shopware\Core\Content\Product\SalesChannel\SalesChannelProductEntity;
 use Shopware\Core\Framework\Adapter\Request\RequestParamHelper;
+use Shopware\Core\Framework\Context;
+use Shopware\Core\Framework\DataAbstractionLayer\EntityRepository;
+use Shopware\Core\Framework\DataAbstractionLayer\Search\Criteria;
+use Shopware\Core\Framework\DataAbstractionLayer\Search\Filter\EqualsFilter;
+use Shopware\Core\Framework\DataAbstractionLayer\Search\Sorting\FieldSorting;
 use Shopware\Core\Framework\Log\Package;
 use Shopware\Core\Framework\Script\Execution\ScriptExecutor;
 use Shopware\Core\System\SystemConfig\SystemConfigService;
@@ -22,11 +30,16 @@ class ProductDescriptionReviewsCmsElementResolver extends AbstractProductDetailC
 
     /**
      * @internal
+     *
+     * @param EntityRepository<ProductDocumentCollection> $productDocumentRepository
+     * @param EntityRepository<MediaCollection> $mediaRepository
      */
     public function __construct(
         private readonly AbstractProductReviewLoader $productReviewLoader,
         private readonly ScriptExecutor $scriptExecutor,
-        private readonly SystemConfigService $systemConfigService
+        private readonly SystemConfigService $systemConfigService,
+        private readonly EntityRepository $productDocumentRepository,
+        private readonly EntityRepository $mediaRepository,
     ) {
     }
 
@@ -65,6 +78,7 @@ class ProductDescriptionReviewsCmsElementResolver extends AbstractProductDetailC
         }
 
         $data->setProduct($product);
+        $this->addDocuments($data, $product, $resolverContext->getSalesChannelContext()->getContext());
 
         if ($this->systemConfigService->getBool('core.listing.showReview', $resolverContext->getSalesChannelContext()->getSalesChannelId())) {
             $reviews = $this->productReviewLoader->load($request, $resolverContext->getSalesChannelContext(), $product->getId(), $product->getParentId());
@@ -73,5 +87,39 @@ class ProductDescriptionReviewsCmsElementResolver extends AbstractProductDetailC
 
             $data->setReviews($reviews);
         }
+    }
+
+    private function addDocuments(ProductDescriptionReviewsStruct $data, SalesChannelProductEntity $product, Context $context): void
+    {
+        $criteria = new Criteria();
+        $criteria->setTitle('cms::product-description-reviews-documents');
+        // `product.id` follows the inheritance of the documents, so a variant without documents of its own gets those of its parent
+        $criteria->addFilter(new EqualsFilter('product.id', $product->getId()));
+        $criteria->addSorting(new FieldSorting('position'));
+
+        $documents = $this->productDocumentRepository->search($criteria, $context)->getEntities();
+
+        $mediaIds = [];
+        foreach ($documents as $document) {
+            $mediaId = $document->getTranslation('mediaId');
+            if (\is_string($mediaId)) {
+                $mediaIds[] = $mediaId;
+            }
+        }
+
+        if ($mediaIds === []) {
+            return;
+        }
+
+        $mediaCriteria = new Criteria(array_values(array_unique($mediaIds)));
+        $mediaCriteria->setTitle('cms::product-description-reviews-document-media');
+        $mediaCriteria->addFilter(new EqualsFilter('private', false));
+
+        $media = $this->mediaRepository->search($mediaCriteria, $context)->getEntities();
+
+        $data->setDocuments($documents->filter(
+            static fn (ProductDocumentEntity $document): bool => \is_string($mediaId = $document->getTranslation('mediaId')) && $media->has($mediaId)
+        ));
+        $data->setDocumentMedia($media);
     }
 }
